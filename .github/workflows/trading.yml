@@ -2,6 +2,7 @@ name: Trading Bot
 on:
   schedule:
     - cron: '45 3 * * 1-5'
+  workflow_dispatch:
 jobs:
   trade:
     runs-on: ubuntu-latest
