@@ -3,11 +3,12 @@ import pyotp
 import time
 import pandas as pd
 from datetime import datetime, timedelta
+import os
 
-API_KEY = "QVMgu1WT"
-CLIENT_ID = "AACG561280"
-PASSWORD = "8081"
-TOTP_SECRET = "KKZWP7SERHISATBCXEACJ4G7CI"
+API_KEY = os.environ['API_KEY']
+CLIENT_ID = os.environ['CLIENT_ID']
+PASSWORD = os.environ['PASSWORD']
+TOTP_SECRET = os.environ['TOTP_SECRET']
 
 STOCKS = [
     {"symbol": "ADANIENT-EQ",   "token": "25",    "name": "ADANIENT"},
@@ -123,7 +124,6 @@ def analyze_stock(api, stock):
             price <= bb_lower * 1.02
         )
 
-        # Score — best signal select ചെയ്യാൻ
         score = 0
         if rsi < 45: score += (45 - rsi)
         if macd > signal: score += 10
@@ -184,7 +184,6 @@ def monitor_trade(api, stock, buy_price):
             print(f"Monitor Error: {e}")
 
 # === MAIN ===
-
 totp = pyotp.TOTP(TOTP_SECRET).now()
 api = SmartConnect(api_key=API_KEY)
 data = api.generateSession(CLIENT_ID, PASSWORD, totp)
@@ -200,13 +199,12 @@ if data['status']:
         result = analyze_stock(api, stock)
         if result and result['buy_signal']:
             results.append(result)
-        time.sleep(0.5)  # API rate limit
+        time.sleep(0.5)
 
     print(f"\n{'='*65}")
     print(f"✅ Buy Signals Found: {len(results)}")
 
     if results:
-        # Best score ഉള്ള stock select
         best = max(results, key=lambda x: x['score'])
         s = best['stock']
         price = best['price']
