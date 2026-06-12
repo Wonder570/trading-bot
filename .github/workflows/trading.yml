@@ -2,7 +2,9 @@ name: Trading Bot
 
 on:
   schedule:
-    - cron: '45 3 * * 1-5'
+    - cron: '45 3 * * 1-5'   # 9:15 AM IST - Market open
+    - cron: '*/15 4-9 * * 1-5'  # എല്ലാ 15 മിനിറ്റിലും
+    - cron: '0 10 * * 1-5'   # 3:30 PM IST - Market close
   workflow_dispatch:
 
 jobs:
@@ -11,10 +13,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # v3 → v4 (warning fix)
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5  # v4 → v5 (warning fix)
         with:
           python-version: '3.10'
 
