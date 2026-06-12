@@ -2,7 +2,7 @@ from SmartApi import SmartConnect
 import pyotp
 import time
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import schedule
 
@@ -81,12 +81,12 @@ def login():
     return False
 
 def is_market_open():
-    now = datetime.now()
-    # Monday=0, Friday=4
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(IST)
     if now.weekday() > 4:
         return False
-    market_open = now.replace(hour=9, minute=15, second=0)
-    market_close = now.replace(hour=15, minute=30, second=0)
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return market_open <= now <= market_close
 
 def calculate_rsi(prices, period=14):
@@ -107,8 +107,9 @@ def calculate_macd(prices):
     return macd.iloc[-1], signal.iloc[-1]
 
 def get_candle_prices(token):
-    to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
-    from_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
+    IST = timezone(timedelta(hours=5, minutes=30))
+    to_date = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
+    from_date = (datetime.now(IST) - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
     params = {
         "exchange": EXCHANGE,
         "symboltoken": token,
@@ -199,10 +200,12 @@ def monitor_trade(stock, entry_price, quantity, is_short=False):
     place_order(stock, "BUY" if is_short else "SELL", quantity)
 
 def run_bot():
+    IST = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(IST)
     if not is_market_open():
-        print(f"💤 Market closed. {datetime.now().strftime('%H:%M')}")
+        print(f"💤 Market closed. {now.strftime('%H:%M')} IST")
         return
-    print(f"\n🚀 Bot running — {datetime.now().strftime('%H:%M')}")
+    print(f"\n🚀 Bot running — {now.strftime('%H:%M')} IST")
     if not login():
         return
     budget = get_available_budget()
@@ -237,11 +240,10 @@ def run_bot():
     else:
         print("⏳ No signals today.")
 
-# എല്ലാ 15 മിനിറ്റിലും run ആകും
 schedule.every(15).minutes.do(run_bot)
 
 print("🤖 Trading Bot Started!")
-run_bot()  # ഉടനെ ഒരിക്കൽ run ആകും
+run_bot()
 
 while True:
     schedule.run_pending()
