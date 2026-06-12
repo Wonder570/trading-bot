@@ -1,4 +1,7 @@
-smartapi -python
+smartapi-python
 pyotp
 pandas
 numpy
+requests
+websocket-client
+schedule
