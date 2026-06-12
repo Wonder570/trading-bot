@@ -131,30 +131,28 @@ def analyze_stock(api, stock):
 
         uptrend = ema9 > ema21
 
-        # Buy Signal (Market Up)
+        # ✅ Relaxed Buy Signal
         buy_signal = (
             uptrend and
-            rsi < 45 and
-            macd > signal and
-            price <= bb_lower * 1.02
+            rsi < 55 and
+            macd > signal
         )
 
-        # Short Sell Signal (Market Down)
+        # ✅ Relaxed Short Sell Signal
         sell_signal = (
             not uptrend and
-            rsi > 60 and
-            macd < signal and
-            price >= bb_upper * 0.98
+            rsi > 50 and
+            macd < signal
         )
 
         buy_score = 0
-        if rsi < 45: buy_score += (45 - rsi)
+        if rsi < 55: buy_score += (55 - rsi)
         if macd > signal: buy_score += 10
         if uptrend: buy_score += 10
         if price <= bb_lower * 1.02: buy_score += 20
 
         sell_score = 0
-        if rsi > 60: sell_score += (rsi - 60)
+        if rsi > 50: sell_score += (rsi - 50)
         if macd < signal: sell_score += 10
         if not uptrend: sell_score += 10
         if price >= bb_upper * 0.98: sell_score += 20
@@ -190,17 +188,22 @@ def place_order(api, stock, transaction, quantity):
 
 def monitor_trade(api, stock, entry_price, quantity, is_short=False):
     if is_short:
-        stop_loss = entry_price * (2 - STOP_LOSS_PCT)  # 2% up = stop loss
-        target = entry_price * (2 - TARGET_PCT)         # 4% down = target
+        stop_loss = entry_price * (2 - STOP_LOSS_PCT)
+        target = entry_price * (2 - TARGET_PCT)
     else:
-        stop_loss = entry_price * STOP_LOSS_PCT          # 2% down = stop loss
-        target = entry_price * TARGET_PCT                # 4% up = target
+        stop_loss = entry_price * STOP_LOSS_PCT
+        target = entry_price * TARGET_PCT
 
     trade_type = "SHORT SELL" if is_short else "BUY"
     print(f"\n⏳ Monitoring {stock['name']} ({trade_type})...")
     print(f"   Entry: ₹{entry_price} | SL: ₹{round(stop_loss,2)} | Target: ₹{round(target,2)} | Qty: {quantity}")
 
-    while True:
+    # ✅ Max 20 minutes (40 × 30s) — GitHub Actions timeout fix
+    max_checks = 40
+    checks = 0
+
+    while checks < max_checks:
+        checks += 1
         time.sleep(30)
         try:
             quote = api.ltpData(EXCHANGE, stock['symbol'], stock['token'])
@@ -211,7 +214,7 @@ def monitor_trade(api, stock, entry_price, quantity, is_short=False):
             else:
                 pnl = round((current - entry_price) * quantity, 2)
 
-            print(f"   {stock['name']}: ₹{current} | P&L: ₹{pnl}")
+            print(f"   [{checks}/40] {stock['name']}: ₹{current} | P&L: ₹{pnl}")
 
             if is_short:
                 if current <= target:
@@ -235,8 +238,17 @@ def monitor_trade(api, stock, entry_price, quantity, is_short=False):
                     place_order(api, stock, "SELL", quantity)
                     print(f"❌ Loss: ₹{abs(pnl)}")
                     return
+
         except Exception as e:
             print(f"Monitor Error: {e}")
+
+    # ✅ 20 minutes കഴിഞ്ഞാൽ auto exit
+    print(f"\n⏰ 20 minutes കഴിഞ്ഞു — Auto Exit!")
+    if is_short:
+        place_order(api, stock, "BUY", quantity)
+    else:
+        place_order(api, stock, "SELL", quantity)
+    print(f"🚪 Position Closed.")
 
 # === MAIN ===
 totp = pyotp.TOTP(TOTP_SECRET).now()
@@ -246,7 +258,6 @@ data = api.generateSession(CLIENT_ID, PASSWORD, totp)
 if data['status']:
     print("✅ Login Success!")
 
-    # Get available budget
     BUDGET = get_available_budget(api)
 
     print(f"\n🔍 Scanning Nifty 50 stocks...\n")
@@ -269,7 +280,6 @@ if data['status']:
     print(f"🟢 Buy Signals: {len(buy_results)}")
     print(f"🔴 Short Signals: {len(short_results)}")
 
-    # Buy trade
     if buy_results:
         best = max(buy_results, key=lambda x: x['buy_score'])
         s = best['stock']
@@ -280,7 +290,6 @@ if data['status']:
         print(f"📋 Order: {order}")
         monitor_trade(api, s, price, quantity, is_short=False)
 
-    # Short sell trade
     elif short_results:
         best = max(short_results, key=lambda x: x['sell_score'])
         s = best['stock']
