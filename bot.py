@@ -4,6 +4,7 @@ import time
 import pandas as pd
 from datetime import datetime, timedelta
 import os
+import schedule
 
 API_KEY = os.environ['API_KEY']
 CLIENT_ID = os.environ['CLIENT_ID']
@@ -66,6 +67,27 @@ STOCKS = [
 STOP_LOSS_PCT = 0.98
 TARGET_PCT = 1.04
 EXCHANGE = "NSE"
+api = None
+
+def login():
+    global api
+    totp = pyotp.TOTP(TOTP_SECRET).now()
+    api = SmartConnect(api_key=API_KEY)
+    data = api.generateSession(CLIENT_ID, PASSWORD, totp)
+    if data['status']:
+        print("✅ Login Success!")
+        return True
+    print("❌ Login Failed!")
+    return False
+
+def is_market_open():
+    now = datetime.now()
+    # Monday=0, Friday=4
+    if now.weekday() > 4:
+        return False
+    market_open = now.replace(hour=9, minute=15, second=0)
+    market_close = now.replace(hour=15, minute=30, second=0)
+    return market_open <= now <= market_close
 
 def calculate_rsi(prices, period=14):
     delta = pd.Series(prices).diff()
@@ -84,13 +106,7 @@ def calculate_macd(prices):
     signal = macd.ewm(span=9, adjust=False).mean()
     return macd.iloc[-1], signal.iloc[-1]
 
-def calculate_bollinger(prices, period=20):
-    series = pd.Series(prices)
-    mid = series.rolling(period).mean().iloc[-1]
-    std = series.rolling(period).std().iloc[-1]
-    return mid - 2*std, mid + 2*std
-
-def get_candle_prices(api, token):
+def get_candle_prices(token):
     to_date = datetime.now().strftime("%Y-%m-%d %H:%M")
     from_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
     params = {
@@ -103,75 +119,44 @@ def get_candle_prices(api, token):
     data = api.getCandleData(params)
     return [candle[4] for candle in data['data']]
 
-def get_available_budget(api):
+def get_available_budget():
     try:
         funds = api.rmsLimit()
         budget = float(funds['data']['availablecash'])
-        print(f"\n💰 Available Balance: ₹{budget}")
+        print(f"💰 Available Balance: ₹{budget}")
         if budget < 500:
-            print("❌ Insufficient Balance! Minimum ₹500 needed.")
-            exit()
+            print("❌ Insufficient Balance!")
+            return None
         return budget
     except Exception as e:
-        print(f"❌ Balance fetch error: {e}")
-        exit()
+        print(f"❌ Balance error: {e}")
+        return None
 
-def analyze_stock(api, stock):
+def analyze_stock(stock):
     try:
-        prices = get_candle_prices(api, stock['token'])
+        prices = get_candle_prices(stock['token'])
         if len(prices) < 26:
             return None
-
         price = prices[-1]
         rsi = calculate_rsi(prices)
         ema9 = calculate_ema(prices, 9)
         ema21 = calculate_ema(prices, 21)
         macd, signal = calculate_macd(prices)
-        bb_lower, bb_upper = calculate_bollinger(prices)
-
         uptrend = ema9 > ema21
-
-        # ✅ Maximum Relaxed Signals
-        buy_signal = (
-            uptrend and
-            rsi < 60
-        )
-
-        sell_signal = (
-            not uptrend and
-            rsi > 45 and
-            macd < signal
-        )
-
-        buy_score = 0
-        if rsi < 60: buy_score += (60 - rsi)
-        if macd > signal: buy_score += 10
-        if uptrend: buy_score += 10
-        if price <= bb_lower * 1.02: buy_score += 20
-
-        sell_score = 0
-        if rsi > 45: sell_score += (rsi - 45)
-        if macd < signal: sell_score += 10
-        if not uptrend: sell_score += 10
-        if price >= bb_upper * 0.98: sell_score += 20
-
-        trend = "📈 UPTREND" if uptrend else "📉 DOWNTREND"
-        signal_str = "🟢 BUY" if buy_signal else ("🔴 SHORT" if sell_signal else "❌")
-        print(f"{stock['name']:15} | ₹{price:8.2f} | {trend} | RSI:{round(rsi,1):5} | {signal_str}")
-
-        return {
-            "stock": stock,
-            "price": price,
-            "buy_signal": buy_signal,
-            "sell_signal": sell_signal,
-            "buy_score": buy_score,
-            "sell_score": sell_score
-        }
+        buy_signal = uptrend and rsi < 60
+        sell_signal = not uptrend and rsi > 45 and macd < signal
+        buy_score = (60 - rsi if rsi < 60 else 0) + (10 if macd > signal else 0) + (10 if uptrend else 0)
+        sell_score = (rsi - 45 if rsi > 45 else 0) + (10 if macd < signal else 0) + (10 if not uptrend else 0)
+        trend = "📈 UP" if uptrend else "📉 DOWN"
+        sig = "🟢 BUY" if buy_signal else ("🔴 SHORT" if sell_signal else "❌")
+        print(f"{stock['name']:15} | ₹{price:8.2f} | {trend} | RSI:{round(rsi,1):5} | {sig}")
+        return {"stock": stock, "price": price, "buy_signal": buy_signal,
+                "sell_signal": sell_signal, "buy_score": buy_score, "sell_score": sell_score}
     except Exception as e:
         print(f"{stock['name']:15} | Error: {e}")
         return None
 
-def place_order(api, stock, transaction, quantity):
+def place_order(stock, transaction, quantity):
     return api.placeOrder({
         "variety": "NORMAL",
         "tradingsymbol": stock['symbol'],
@@ -184,120 +169,80 @@ def place_order(api, stock, transaction, quantity):
         "quantity": quantity
     })
 
-def monitor_trade(api, stock, entry_price, quantity, is_short=False):
-    if is_short:
-        stop_loss = entry_price * (2 - STOP_LOSS_PCT)
-        target = entry_price * (2 - TARGET_PCT)
-    else:
-        stop_loss = entry_price * STOP_LOSS_PCT
-        target = entry_price * TARGET_PCT
-
-    trade_type = "SHORT SELL" if is_short else "BUY"
-    print(f"\n⏳ Monitoring {stock['name']} ({trade_type})...")
-    print(f"   Entry: ₹{entry_price} | SL: ₹{round(stop_loss,2)} | Target: ₹{round(target,2)} | Qty: {quantity}")
-
-    max_checks = 40
-    checks = 0
-
-    while checks < max_checks:
-        checks += 1
+def monitor_trade(stock, entry_price, quantity, is_short=False):
+    stop_loss = entry_price * (STOP_LOSS_PCT if not is_short else (2 - STOP_LOSS_PCT))
+    target = entry_price * (TARGET_PCT if not is_short else (2 - TARGET_PCT))
+    trade_type = "SHORT" if is_short else "BUY"
+    print(f"⏳ Monitoring {stock['name']} ({trade_type}) | SL:₹{round(stop_loss,2)} | Target:₹{round(target,2)}")
+    for i in range(40):
         time.sleep(30)
+        if not is_market_open():
+            print("🔔 Market closed — Auto Exit!")
+            place_order(stock, "BUY" if is_short else "SELL", quantity)
+            return
         try:
             quote = api.ltpData(EXCHANGE, stock['symbol'], stock['token'])
             current = quote['data']['ltp']
-
-            if is_short:
-                pnl = round((entry_price - current) * quantity, 2)
-            else:
-                pnl = round((current - entry_price) * quantity, 2)
-
-            print(f"   [{checks}/40] {stock['name']}: ₹{current} | P&L: ₹{pnl}")
-
-            if is_short:
-                if current <= target:
-                    print(f"🎯 Target Hit!")
-                    place_order(api, stock, "BUY", quantity)
-                    print(f"✅ Profit: ₹{pnl}")
-                    return
-                elif current >= stop_loss:
-                    print(f"🛑 Stop Loss Hit!")
-                    place_order(api, stock, "BUY", quantity)
-                    print(f"❌ Loss: ₹{abs(pnl)}")
-                    return
-            else:
-                if current >= target:
-                    print(f"🎯 Target Hit!")
-                    place_order(api, stock, "SELL", quantity)
-                    print(f"✅ Profit: ₹{pnl}")
-                    return
-                elif current <= stop_loss:
-                    print(f"🛑 Stop Loss Hit!")
-                    place_order(api, stock, "SELL", quantity)
-                    print(f"❌ Loss: ₹{abs(pnl)}")
-                    return
-
+            pnl = round((entry_price - current if is_short else current - entry_price) * quantity, 2)
+            print(f"[{i+1}/40] {stock['name']}: ₹{current} | P&L: ₹{pnl}")
+            if (is_short and current <= target) or (not is_short and current >= target):
+                print(f"🎯 Target Hit! Profit: ₹{pnl}")
+                place_order(stock, "BUY" if is_short else "SELL", quantity)
+                return
+            if (is_short and current >= stop_loss) or (not is_short and current <= stop_loss):
+                print(f"🛑 Stop Loss! Loss: ₹{abs(pnl)}")
+                place_order(stock, "BUY" if is_short else "SELL", quantity)
+                return
         except Exception as e:
             print(f"Monitor Error: {e}")
+    print("⏰ 20 min — Auto Exit!")
+    place_order(stock, "BUY" if is_short else "SELL", quantity)
 
-    print(f"\n⏰ 20 minutes കഴിഞ്ഞു — Auto Exit!")
-    if is_short:
-        place_order(api, stock, "BUY", quantity)
-    else:
-        place_order(api, stock, "SELL", quantity)
-    print(f"🚪 Position Closed.")
-
-# === MAIN ===
-totp = pyotp.TOTP(TOTP_SECRET).now()
-api = SmartConnect(api_key=API_KEY)
-data = api.generateSession(CLIENT_ID, PASSWORD, totp)
-
-if data['status']:
-    print("✅ Login Success!")
-
-    BUDGET = get_available_budget(api)
-
-    print(f"\n🔍 Scanning Nifty 50 stocks...\n")
-    print(f"{'Stock':15} | {'Price':8} | {'Trend':15} | {'RSI':5} | Signal")
-    print("-" * 65)
-
-    buy_results = []
-    short_results = []
-
+def run_bot():
+    if not is_market_open():
+        print(f"💤 Market closed. {datetime.now().strftime('%H:%M')}")
+        return
+    print(f"\n🚀 Bot running — {datetime.now().strftime('%H:%M')}")
+    if not login():
+        return
+    budget = get_available_budget()
+    if not budget:
+        return
+    buy_results, short_results = [], []
     for stock in STOCKS:
-        result = analyze_stock(api, stock)
+        result = analyze_stock(stock)
         if result:
             if result['buy_signal']:
                 buy_results.append(result)
             elif result['sell_signal']:
                 short_results.append(result)
-        time.sleep(2)  # ✅ 0.5 → 2 seconds (rate limit fix)
-
-    print(f"\n{'='*65}")
-    print(f"🟢 Buy Signals: {len(buy_results)}")
-    print(f"🔴 Short Signals: {len(short_results)}")
-
+        time.sleep(2)
+    print(f"🟢 Buy: {len(buy_results)} | 🔴 Short: {len(short_results)}")
     if buy_results:
         best = max(buy_results, key=lambda x: x['buy_score'])
-        s = best['stock']
-        price = best['price']
-        quantity = max(1, int(BUDGET / price))
-        print(f"\n🏆 Best BUY: {s['name']} @ ₹{price} | Qty: {quantity}")
-        order = place_order(api, s, "BUY", quantity)
+        s, price = best['stock'], best['price']
+        qty = max(1, int(budget / price))
+        print(f"🏆 BUY: {s['name']} @ ₹{price} | Qty: {qty}")
+        order = place_order(s, "BUY", qty)
         print(f"📋 Order: {order}")
-        monitor_trade(api, s, price, quantity, is_short=False)
-
+        monitor_trade(s, price, qty, is_short=False)
     elif short_results:
         best = max(short_results, key=lambda x: x['sell_score'])
-        s = best['stock']
-        price = best['price']
-        quantity = max(1, int(BUDGET / price))
-        print(f"\n🏆 Best SHORT: {s['name']} @ ₹{price} | Qty: {quantity}")
-        order = place_order(api, s, "SELL", quantity)
+        s, price = best['stock'], best['price']
+        qty = max(1, int(budget / price))
+        print(f"🏆 SHORT: {s['name']} @ ₹{price} | Qty: {qty}")
+        order = place_order(s, "SELL", qty)
         print(f"📋 Order: {order}")
-        monitor_trade(api, s, price, quantity, is_short=True)
-
+        monitor_trade(s, price, qty, is_short=True)
     else:
-        print("\n⏳ No good signals today. Try tomorrow!")
+        print("⏳ No signals today.")
 
-else:
-    print("❌ Login Failed!")
+# എല്ലാ 15 മിനിറ്റിലും run ആകും
+schedule.every(15).minutes.do(run_bot)
+
+print("🤖 Trading Bot Started!")
+run_bot()  # ഉടനെ ഒരിക്കൽ run ആകും
+
+while True:
+    schedule.run_pending()
+    time.sleep(60)
