@@ -131,28 +131,26 @@ def analyze_stock(api, stock):
 
         uptrend = ema9 > ema21
 
-        # ✅ Relaxed Buy Signal
+        # ✅ Maximum Relaxed Signals
         buy_signal = (
             uptrend and
-            rsi < 55 and
-            macd > signal
+            rsi < 60
         )
 
-        # ✅ Relaxed Short Sell Signal
         sell_signal = (
             not uptrend and
-            rsi > 50 and
+            rsi > 45 and
             macd < signal
         )
 
         buy_score = 0
-        if rsi < 55: buy_score += (55 - rsi)
+        if rsi < 60: buy_score += (60 - rsi)
         if macd > signal: buy_score += 10
         if uptrend: buy_score += 10
         if price <= bb_lower * 1.02: buy_score += 20
 
         sell_score = 0
-        if rsi > 50: sell_score += (rsi - 50)
+        if rsi > 45: sell_score += (rsi - 45)
         if macd < signal: sell_score += 10
         if not uptrend: sell_score += 10
         if price >= bb_upper * 0.98: sell_score += 20
@@ -198,7 +196,6 @@ def monitor_trade(api, stock, entry_price, quantity, is_short=False):
     print(f"\n⏳ Monitoring {stock['name']} ({trade_type})...")
     print(f"   Entry: ₹{entry_price} | SL: ₹{round(stop_loss,2)} | Target: ₹{round(target,2)} | Qty: {quantity}")
 
-    # ✅ Max 20 minutes (40 × 30s) — GitHub Actions timeout fix
     max_checks = 40
     checks = 0
 
@@ -242,7 +239,6 @@ def monitor_trade(api, stock, entry_price, quantity, is_short=False):
         except Exception as e:
             print(f"Monitor Error: {e}")
 
-    # ✅ 20 minutes കഴിഞ്ഞാൽ auto exit
     print(f"\n⏰ 20 minutes കഴിഞ്ഞു — Auto Exit!")
     if is_short:
         place_order(api, stock, "BUY", quantity)
@@ -274,7 +270,7 @@ if data['status']:
                 buy_results.append(result)
             elif result['sell_signal']:
                 short_results.append(result)
-        time.sleep(0.5)
+        time.sleep(2)  # ✅ 0.5 → 2 seconds (rate limit fix)
 
     print(f"\n{'='*65}")
     print(f"🟢 Buy Signals: {len(buy_results)}")
