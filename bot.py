@@ -69,6 +69,22 @@ TARGET_PCT = 1.04
 EXCHANGE = "NSE"
 api = None
 
+def get_ist_time():
+    IST = timezone(timedelta(hours=5, minutes=30))
+    return datetime.now(IST)
+
+def is_market_open():
+    now = get_ist_time()
+    if now.weekday() > 4:
+        return False
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=14, second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+def is_force_exit_time():
+    now = get_ist_time()
+    return (now.hour == 15 and now.minute >= 14) or (now.hour > 15)
+
 def login():
     global api
     totp = pyotp.TOTP(TOTP_SECRET).now()
@@ -79,15 +95,6 @@ def login():
         return True
     print("❌ Login Failed!")
     return False
-
-def is_market_open():
-    IST = timezone(timedelta(hours=5, minutes=30))
-    now = datetime.now(IST)
-    if now.weekday() > 4:
-        return False
-    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
-    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    return market_open <= now <= market_close
 
 def calculate_rsi(prices, period=14):
     delta = pd.Series(prices).diff()
@@ -107,9 +114,9 @@ def calculate_macd(prices):
     return macd.iloc[-1], signal.iloc[-1]
 
 def get_candle_prices(token):
-    IST = timezone(timedelta(hours=5, minutes=30))
-    to_date = datetime.now(IST).strftime("%Y-%m-%d %H:%M")
-    from_date = (datetime.now(IST) - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
+    now = get_ist_time()
+    to_date = now.strftime("%Y-%m-%d %H:%M")
+    from_date = (now - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
     params = {
         "exchange": EXCHANGE,
         "symboltoken": token,
@@ -175,17 +182,28 @@ def monitor_trade(stock, entry_price, quantity, is_short=False):
     target = entry_price * (TARGET_PCT if not is_short else (2 - TARGET_PCT))
     trade_type = "SHORT" if is_short else "BUY"
     print(f"⏳ Monitoring {stock['name']} ({trade_type}) | SL:₹{round(stop_loss,2)} | Target:₹{round(target,2)}")
+
     for i in range(40):
         time.sleep(30)
+
+        # ✅ 3:14 PM Force Exit — Fine avoid ചെയ്യാൻ
+        if is_force_exit_time():
+            print(f"⛔ 3:14 PM Force Exit! — {stock['name']}")
+            place_order(stock, "BUY" if is_short else "SELL", quantity)
+            print("✅ Position Closed — Fine Avoided!")
+            return
+
         if not is_market_open():
             print("🔔 Market closed — Auto Exit!")
             place_order(stock, "BUY" if is_short else "SELL", quantity)
             return
+
         try:
             quote = api.ltpData(EXCHANGE, stock['symbol'], stock['token'])
             current = quote['data']['ltp']
             pnl = round((entry_price - current if is_short else current - entry_price) * quantity, 2)
-            print(f"[{i+1}/40] {stock['name']}: ₹{current} | P&L: ₹{pnl}")
+            print(f"[{i+1}/40] {stock['name']}: ₹{current} | P&L: ₹{pnl} | {get_ist_time().strftime('%H:%M')} IST")
+
             if (is_short and current <= target) or (not is_short and current >= target):
                 print(f"🎯 Target Hit! Profit: ₹{pnl}")
                 place_order(stock, "BUY" if is_short else "SELL", quantity)
@@ -196,21 +214,29 @@ def monitor_trade(stock, entry_price, quantity, is_short=False):
                 return
         except Exception as e:
             print(f"Monitor Error: {e}")
+
     print("⏰ 20 min — Auto Exit!")
     place_order(stock, "BUY" if is_short else "SELL", quantity)
 
 def run_bot():
-    IST = timezone(timedelta(hours=5, minutes=30))
-    now = datetime.now(IST)
+    now = get_ist_time()
+
+    # ✅ 3:14 PM കഴിഞ്ഞാൽ new trade ഇല്ല
+    if is_force_exit_time():
+        print(f"⛔ 3:14 PM passed — No new trades! {now.strftime('%H:%M')} IST")
+        return
+
     if not is_market_open():
         print(f"💤 Market closed. {now.strftime('%H:%M')} IST")
         return
+
     print(f"\n🚀 Bot running — {now.strftime('%H:%M')} IST")
     if not login():
         return
     budget = get_available_budget()
     if not budget:
         return
+
     buy_results, short_results = [], []
     for stock in STOCKS:
         result = analyze_stock(stock)
@@ -220,7 +246,9 @@ def run_bot():
             elif result['sell_signal']:
                 short_results.append(result)
         time.sleep(2)
+
     print(f"🟢 Buy: {len(buy_results)} | 🔴 Short: {len(short_results)}")
+
     if buy_results:
         best = max(buy_results, key=lambda x: x['buy_score'])
         s, price = best['stock'], best['price']
