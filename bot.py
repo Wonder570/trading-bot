@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 import os
 import schedule
+import requests
 
 API_KEY = os.environ['API_KEY']
 CLIENT_ID = os.environ['CLIENT_ID']
@@ -12,6 +13,7 @@ PASSWORD = os.environ['PASSWORD']
 TOTP_SECRET = os.environ['TOTP_SECRET']
 
 STOCKS = [
+    # Nifty 50
     {"symbol": "ADANIENT-EQ",   "token": "25",    "name": "ADANIENT"},
     {"symbol": "ADANIPORTS-EQ", "token": "15083", "name": "ADANIPORTS"},
     {"symbol": "APOLLOHOSP-EQ", "token": "157",   "name": "APOLLOHOSP"},
@@ -62,6 +64,18 @@ STOCKS = [
     {"symbol": "UPL-EQ",        "token": "11287", "name": "UPL"},
     {"symbol": "WIPRO-EQ",      "token": "3787",  "name": "WIPRO"},
     {"symbol": "ZOMATO-EQ",     "token": "5097",  "name": "ZOMATO"},
+
+    # 🥇 Gold ETF
+    {"symbol": "GOLDBEES-EQ",   "token": "13611", "name": "GOLDBEES"},
+    {"symbol": "HDFCGOLD-EQ",   "token": "27446", "name": "HDFCGOLD"},
+    {"symbol": "NIPGOLD-EQ",    "token": "29114", "name": "NIPGOLD"},
+    {"symbol": "AXISGOLD-EQ",   "token": "21798", "name": "AXISGOLD"},
+    {"symbol": "SBIGOLD-EQ",    "token": "31061", "name": "SBIGOLD"},
+
+    # 🥈 Silver ETF
+    {"symbol": "SILVERBEES-EQ", "token": "67106", "name": "SILVERBEES"},
+    {"symbol": "SILVERIETF-EQ", "token": "67119", "name": "SILVERIETF"},
+    {"symbol": "LICSILVER-EQ",  "token": "67285", "name": "LICSILVER"},
 ]
 
 STOP_LOSS_PCT = 0.98
@@ -92,6 +106,11 @@ def login():
     data = api.generateSession(CLIENT_ID, PASSWORD, totp)
     if data['status']:
         print("✅ Login Success!")
+        try:
+            ip = requests.get('https://api.ipify.org').text
+            print(f"🌐 Railway IP: {ip}")
+        except:
+            pass
         return True
     print("❌ Login Failed!")
     return False
@@ -186,7 +205,6 @@ def monitor_trade(stock, entry_price, quantity, is_short=False):
     for i in range(40):
         time.sleep(30)
 
-        # ✅ 3:14 PM Force Exit — Fine avoid ചെയ്യാൻ
         if is_force_exit_time():
             print(f"⛔ 3:14 PM Force Exit! — {stock['name']}")
             place_order(stock, "BUY" if is_short else "SELL", quantity)
@@ -221,7 +239,6 @@ def monitor_trade(stock, entry_price, quantity, is_short=False):
 def run_bot():
     now = get_ist_time()
 
-    # ✅ 3:14 PM കഴിഞ്ഞാൽ new trade ഇല്ല
     if is_force_exit_time():
         print(f"⛔ 3:14 PM passed — No new trades! {now.strftime('%H:%M')} IST")
         return
