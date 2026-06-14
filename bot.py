@@ -318,7 +318,13 @@ def run_bot():
         print(f"📋 Order: {order}")
         monitor_trade(s, price, qty, is_short=False)
     elif short_results:
-        print("📉 Market DOWN — Short sell skipped (F&O needed)")
+        best = max(short_results, key=lambda x: x['sell_score'])
+        s, price = best['stock'], best['price']
+        qty = max(1, int(budget / price))
+        print(f"🏆 SHORT: {s['name']} @ ₹{price} | Qty: {qty}")
+        order = place_order(s, "SELL", qty)
+        print(f"📋 Order: {order}")
+        monitor_trade(s, price, qty, is_short=True)
     else:
         print("⏳ No signals today.")
 
