@@ -76,6 +76,53 @@ STOCKS = [
     {"symbol": "SILVERBEES-EQ", "token": "67106", "name": "SILVERBEES"},
     {"symbol": "SILVERIETF-EQ", "token": "67119", "name": "SILVERIETF"},
     {"symbol": "LICSILVER-EQ",  "token": "67285", "name": "LICSILVER"},
+
+    # 🚂 Railway
+    {"symbol": "IRFC-EQ",       "token": "13611", "name": "IRFC"},
+    {"symbol": "RVNL-EQ",       "token": "22475", "name": "RVNL"},
+    {"symbol": "IREDA-EQ",      "token": "26894", "name": "IREDA"},
+    {"symbol": "RAILTEL-EQ",    "token": "19223", "name": "RAILTEL"},
+    {"symbol": "IRCTC-EQ",      "token": "13635", "name": "IRCTC"},
+
+    # 💊 Pharma
+    {"symbol": "AUROPHARMA-EQ", "token": "275",   "name": "AUROPHARMA"},
+    {"symbol": "LUPIN-EQ",      "token": "10440", "name": "LUPIN"},
+    {"symbol": "TORNTPHARM-EQ", "token": "3721",  "name": "TORNTPHARM"},
+    {"symbol": "ALKEM-EQ",      "token": "13634", "name": "ALKEM"},
+    {"symbol": "IPCALAB-EQ",    "token": "1678",  "name": "IPCALAB"},
+
+    # 🏦 Banking
+    {"symbol": "BANDHANBNK-EQ", "token": "2263",  "name": "BANDHANBNK"},
+    {"symbol": "IDFCFIRSTB-EQ", "token": "11857", "name": "IDFCFIRSTB"},
+    {"symbol": "PNB-EQ",        "token": "2730",  "name": "PNB"},
+    {"symbol": "CANBK-EQ",      "token": "10794", "name": "CANBK"},
+    {"symbol": "UNIONBANK-EQ",  "token": "10791", "name": "UNIONBANK"},
+    {"symbol": "BANKBARODA-EQ", "token": "4668",  "name": "BANKBARODA"},
+
+    # ⚡ Energy
+    {"symbol": "TATAPOWER-EQ",  "token": "3426",  "name": "TATAPOWER"},
+    {"symbol": "CESC-EQ",       "token": "591",   "name": "CESC"},
+    {"symbol": "NHPC-EQ",       "token": "13810", "name": "NHPC"},
+    {"symbol": "SJVN-EQ",       "token": "22475", "name": "SJVN"},
+    {"symbol": "TORNTPOWER-EQ", "token": "3718",  "name": "TORNTPOWER"},
+    {"symbol": "ADANIGREEN-EQ", "token": "13538", "name": "ADANIGREEN"},
+
+    # 🛡️ Defence
+    {"symbol": "HAL-EQ",        "token": "2303",  "name": "HAL"},
+    {"symbol": "BEL-EQ",        "token": "383",   "name": "BEL"},
+    {"symbol": "BHEL-EQ",       "token": "438",   "name": "BHEL"},
+    {"symbol": "BEML-EQ",       "token": "394",   "name": "BEML"},
+    {"symbol": "DATAPATTNS-EQ", "token": "43459", "name": "DATAPATTNS"},
+
+    # 🚢 Shipping & Shipyard
+    {"symbol": "MAZDOCK-EQ",    "token": "19234", "name": "MAZDOCK"},
+    {"symbol": "COCHINSHIP-EQ", "token": "590",   "name": "COCHINSHIP"},
+    {"symbol": "GRSE-EQ",       "token": "21614", "name": "GRSE"},
+    {"symbol": "SCI-EQ",        "token": "3273",  "name": "SCI"},
+    {"symbol": "GESHIP-EQ",     "token": "1209",  "name": "GESHIP"},
+
+    # 🏦 Exchange
+    {"symbol": "MCX-EQ",        "token": "5097",  "name": "MCX"},
 ]
 
 STOP_LOSS_PCT = 0.98
@@ -223,13 +270,13 @@ def monitor_trade(stock, entry_price, quantity, is_short=False):
                 return
         except Exception as e:
             print(f"Monitor Error: {e}")
+
     print("⏰ 20 min — Auto Exit!")
     place_order(stock, "BUY" if is_short else "SELL", quantity)
 
 def run_bot():
     now = get_ist_time()
 
-    # ✅ IP always print
     try:
         ip = requests.get('https://api.ipify.org').text
         print(f"🌐 Railway IP: {ip}")
@@ -242,12 +289,14 @@ def run_bot():
     if not is_market_open():
         print(f"💤 Market closed. {now.strftime('%H:%M')} IST")
         return
+
     print(f"\n🚀 Bot running — {now.strftime('%H:%M')} IST")
     if not login():
         return
     budget = get_available_budget()
     if not budget:
         return
+
     buy_results, short_results = [], []
     for stock in STOCKS:
         result = analyze_stock(stock)
@@ -257,7 +306,9 @@ def run_bot():
             elif result['sell_signal']:
                 short_results.append(result)
         time.sleep(2)
+
     print(f"🟢 Buy: {len(buy_results)} | 🔴 Short: {len(short_results)}")
+
     if buy_results:
         best = max(buy_results, key=lambda x: x['buy_score'])
         s, price = best['stock'], best['price']
@@ -267,13 +318,7 @@ def run_bot():
         print(f"📋 Order: {order}")
         monitor_trade(s, price, qty, is_short=False)
     elif short_results:
-        best = max(short_results, key=lambda x: x['sell_score'])
-        s, price = best['stock'], best['price']
-        qty = max(1, int(budget / price))
-        print(f"🏆 SHORT: {s['name']} @ ₹{price} | Qty: {qty}")
-        order = place_order(s, "SELL", qty)
-        print(f"📋 Order: {order}")
-        monitor_trade(s, price, qty, is_short=True)
+        print("📉 Market DOWN — Short sell skipped (F&O needed)")
     else:
         print("⏳ No signals today.")
 
